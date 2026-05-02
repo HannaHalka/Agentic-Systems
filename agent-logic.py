@@ -1,58 +1,3 @@
-# def chat_with_questions_api(user_message, client):
-#     """Have a conversation with GPT-4o that can call your Questions API"""
-#
-#     messages = [
-#         {
-#             "role": "system",
-#             "content": """You are an AI assistant that can interact with a Q&A REST API for managing questions.
-#             You can create, read, and update questions. When users ask you to perform operations on questions,
-#             use the available functions to interact with the API. Ask for clarification if not enough information is available.
-#
-#             Note: This system doesn't support DELETE operations for questions because in distributed systems,
-#             deletes are typically avoided to maintain data consistency and audit trails."""
-#         },
-#         {"role": "user", "content": user_message}
-#     ]
-#
-#     logger.info(f"User: {user_message}")
-#
-#     response = openai.chat.completions.create(
-#         model="gpt-4o",
-#         messages=messages,
-#         tools=QUESTION_FUNCTIONS,
-#         tool_choice="auto"
-#     )
-#
-#     message = response.choices[0].message
-#     messages.append(message)
-#
-#     if message.tool_calls:
-#         logger.info("\nGPT-4o is calling functions...")
-#
-#         for tool_call in message.tool_calls:
-#             function_name = tool_call.function.name
-#             arguments = json.loads(tool_call.function.arguments)
-#
-#             logger.info(f"Function: {function_name}")
-#             logger.info(f"Arguments: {json.dumps(arguments, indent=2)}")
-#
-#             function_result = execute_function(function_name, arguments, client)
-#             logger.info(f"API Response: {function_result}")
-#
-#             messages.append({
-#                 "role": "tool",
-#                 "tool_call_id": tool_call.id,
-#                 "content": function_result
-#             })
-#
-#         final_response = openai.chat.completions.create(
-#             model="gpt-4o",
-#             messages=messages
-#         )
-#
-#         logger.info(f"\nGPT-4o: {final_response.choices[0].message.content}")
-#     else:
-#         logger.info(f"\nGPT-4o: {message.content}")
 import datetime
 from typing import Annotated
 from typing_extensions import TypedDict
@@ -66,70 +11,117 @@ class AgentState(TypedDict):
     issue_id: str
     repo_context: str
 
-    issue_title: str
-    issue_text: str
-    is_open: bool
-    issue_opened: str
-    issue_closed: str
-    issue_type: str
 
-    similar_issues: list[{str, str}]
-    history: str
-    related_code: str
+def ask_model(messages):
+    model_response = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        tools=TOOLS,
+        tool_choice="auto"
+    )
+    response = model_response.choices[0].message
+    messages.append(response)
 
-    final_message: str
+    if response.tool_calls:
+        for tool_call in response.tool_calls:
+            function_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+
+            function_result = execute_function(function_name, arguments, client)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": function_result
+            })
+
+    final_response = openai.chat.completions.create(
+        model="gpt-4o",
+        messages=messages
+    )
+    return [final_response.choices[0].message]
 
 
 async def init_with_context(state):
     context = get_context(state["issue_id"])
     return {"repo_context": context,
             "messages": [
-                ("system", """You are an AI assistant that can interact with issues raised in a public GitHub repository.
-                You can read issues and the repository code. When users give you an issue by id, use the available
-                functions to produce a triage report on this issue."""),
-                ("user", state["issue_id"]),
-                ("tool", context)
+                {"role": "system", "content": """You are an AI assistant that can interact with issues raised in a public GitHub repository.
+                You can read issues and the repository code. When users give you an issue id and ask questions about the 
+                issue, use the available functions to interact with the GitHub repository and answer the questions."""},
+                {"role": "user", "content": state["issue_id"]},
+                {"role": "tool", "content": context}
             ]}
 
 
 async def basic_info(state):
     info = get_basic_info(state["issue_id"])
-    info["messages"] = ("tool", f"{info}")
+    info["messages"] = {"role": "tool", "content": f"{info}"}
     return info
 
 
 async def issue_type(state):
-    return {"issue_type": decide_issue_type(state)}
+    message = [{"role": "user", "content": """"Classify the issue into one of the following 5 categories:
+    1. bug
+    2. feature request
+    3. question
+    4. documentation
+    5. duplicate
+    Explain your reasoning citing specific content from the issue or linked issues."""}]
+    response = ask_model(state["messages"] + message)
+    return {"messages": message + response}
 
 
 async def similar_issues(state):
-    return {"similar_issues": get_similar_issues(state)}
+    message = [{"role": "user", "content": """"For the given issue, find up to 3 likely duplicate or closely related issues.
+    Explain the relationship between the given issue and the selected issues."""}]
+    response = ask_model(state["messages"] + message)
+    return {"messages": message + response}
 
 
 async def related_code(state):
-    return {"related_code": get_related_code(state)}
+    message = [{"role": "user", "content": """"For the given bug report, identify the most probable area of the codebase affected. 
+    Use the issue text plus repository search."""}]
+    response = ask_model(state["messages"] + message)
+    return {"messages": message + response}
 
 
 async def history(state):
-    return {"history": get_history(state)}
+    message = [{"role": "user", "content": """"For the given issue, summarize its current state, outstanding questions, and what decision is needed to move it forward"""}]
+    response = ask_model(state["messages"] + message)
+    return {"messages": message + response}
 
 
 def compile_final_message(state):
-    return {"final_message": ""}
+    message = [{"role": "user",
+               "content": """"Analyze the chat from start to finish.
+               Produce a triage report on the GitHub issue based on the chat contents."""}]
+    response = ask_model(state["messages"] + message)
+    return response[0]
 
 
 def history_cond(state):
-    if state["is_open"] and datetime(state["issue_opened"]) - datetime.datetime.now() >= 6m:
+    q1 = [{"role": "user", "content": """"Is the given issue currently open? Return only the bool output."""}]
+    q2 = [{"role": "user", "content": """"Was the given issue opened over 6 months ago? Return only the bool output."""}]
+
+    response1 = ask_model(state["messages"] + q1)
+    response2 = ask_model(state["messages"] + q2)
+
+    if response1[0].content.lower() == "true" and response2[0].content.lower() == "true":
         return "history"
     else:
-        return "issue_type"
+        return "similar_issues"
 
 
 def related_code_cond(state):
-    if state["issue_type"] == "bug":
+    q = [{"role": "user", "content": """"Is the given issue a bug report? Return only the bool output."""}]
+
+    response1 = ask_model(state["messages"] + q)
+
+    if response1[0].content.lower() == "true":
         return "related_code"
     else:
-        return "similar_issues"
+        return "compile_final_message"
 
 
 graph = StateGraph(AgentState)
@@ -145,14 +137,14 @@ graph.add_node("compile_final_message", compile_final_message)
 graph.add_edge(START, "init_with_context")
 graph.add_edge("init_with_context", "basic_info")
 graph.add_conditional_edges("basic_info", history_cond)
-graph.add_edge("history", "issue_type")
+graph.add_edge("history", "similar_issues")
+graph.add_edge("similar_issues", "issue_type")
 graph.add_conditional_edges("issue_type", related_code_cond)
-graph.add_edge("related_code", "similar_issues")
-graph.add_edge("similar_issues", "compile_final_message")
+graph.add_edge("related_code", "compile_final_message")
 graph.add_edge("compile_final_message", END)
 
 app = graph.compile()
 issue_id = "SOME_ID"
 initial_state: AgentState = {"issue_id": issue_id}
 final_state = app.ainvoke(initial_state)
-print(f"Final Result: {final_state['final_message']}")  # Output: 16
+print(f"Final Result: {final_state['final_message']}")
