@@ -1,0 +1,41 @@
+{
+  "type": "function",
+  "function":
+    {
+      "name": "get_issue_comments",
+      "description": "Get comments for a GitHub issue",
+      "parameters":
+        {
+          "type": "object",
+          "properties":
+            {
+              "owner":
+                {
+                  "type": "string",
+                  "description": "Repository owner"
+                },
+              "repo":
+                {
+                  "type": "string",
+                  "description": "Repository name"
+                },
+              "issue_number":
+                {
+                  "type": "integer",
+                  "description": "GitHub issue number"
+                },
+              "per_page":
+                {
+                  "type": "integer",
+                  "description": "Number of comments per page, >= 30"
+                },
+              "page":
+                {
+                  "type": "integer",
+                  "description": "Page number"
+                }
+            },
+          "required": ["owner", "repo", "issue_number"]
+        }
+    }
+}

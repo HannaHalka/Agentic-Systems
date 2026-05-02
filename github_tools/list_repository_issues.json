@@ -1,0 +1,42 @@
+{
+  "type": "function",
+  "function":
+    {
+      "name": "list_repository_issues",
+      "description": "List issues from a GitHub repository",
+      "parameters":
+        {
+          "type": "object",
+          "properties":
+            {
+              "owner":
+                {
+                  "type": "string",
+                  "description": "Repository owner"
+                },
+              "repo":
+                {
+                  "type": "string",
+                  "description": "Repository name"
+                },
+              "state":
+                {
+                  "type": "string",
+                  "enum": ["open", "closed", "all"],
+                  "description": "Issue state filter"
+                },
+              "per_page":
+                {
+                  "type": "integer",
+                  "description": "Number of issues per page, >= 30"
+                },
+              "page":
+                {
+                  "type": "integer",
+                  "description": "Page number"
+                }
+            },
+          "required": ["owner", "repo"]
+        }
+    }
+}

@@ -1,0 +1,41 @@
+{
+  "type": "function",
+  "function":
+    {
+      "name": "search_issues",
+      "description": "Search GitHub issues inside one repository using keywords, error messages, or module names",
+      "parameters":
+        {
+          "type": "object",
+          "properties":
+            {
+              "owner":
+                {
+                  "type": "string",
+                  "description": "Repository owner"
+                },
+              "repo":
+                {
+                  "type": "string",
+                  "description": "Repository name"
+                },
+              "query":
+                {
+                  "type": "string",
+                  "description": "Search query"
+                },
+              "per_page":
+                {
+                  "type": "integer",
+                  "description": "Number of results per page, >= 30"
+                },
+              "page":
+                {
+                  "type": "integer",
+                  "description": "Page number"
+                }
+            },
+          "required": ["owner", "repo", "query"]
+        }
+    }
+}
