@@ -1,3 +1,9 @@
+
+All three tracks use free, publicly accessible data sources that do not require a paid
+API key. You are expected to respect the rate limits and terms of service of each
+source and to cache responses locally during development.
+
+
 Data sources (no API key required for low-volume use; students may authenticate with
 a personal token to raise rate limits):
 - GitHub REST API (https://docs.github.com/en/rest) for issues, pull requests,

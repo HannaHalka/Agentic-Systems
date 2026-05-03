@@ -1,0 +1,21 @@
+{
+  "type": "function",
+  "function":
+    {
+      "name": "get_repository_file_by_url",
+      "description": "Read source code or text content from a GitHub file using URL",
+      "parameters":
+        {
+          "type": "object",
+          "properties":
+            {
+              "url":
+                {
+                  "type": "string",
+                  "description": "GitHub file URL, for example https://github.com/HannaHalka/Agentic-Systems/blob/github-api/github_api.py"
+                }
+            },
+          "required": ["url"]
+        }
+    }
+}
