@@ -1,15 +1,10 @@
-import logging
-
 import requests
 from dotenv import load_dotenv
+import json
 
 
 api_url = "https://api.github.com"
-
 load_dotenv()
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class GitHubAPI:
@@ -87,3 +82,19 @@ class GitHubAPI:
                 "page": page,
             })
         return issue
+
+
+def execute_function(function_name: str, arguments: dict[str, any], client: GitHubAPI) -> str:
+    """Execute the function call and return result as string"""
+    if function_name == "get_issue":
+        result = client.get_issue(**arguments)
+    elif function_name == "get_issue_comments":
+        result = client.get_issue_comments(**arguments)
+    elif function_name == "list_repository_issues":
+        result = client.list_repository_issues(**arguments)
+    elif function_name == "search_issues":
+        result = client.search_issues(**arguments)
+    else:
+        return f"Unknown function: {function_name}"
+
+    return json.dumps(result, indent=2)

@@ -1,26 +1,35 @@
-import datetime
 from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.graph import StateGraph, START, END
+from mistralai import Mistral
+import json
+from github_api import execute_function, GitHubAPI
 
 
-class AgentState(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
+api_key = "21Z5Tgmvrd69iu0yfU7ot1QRNOcT7Tcv"
+mistral_ai = Mistral(api_key=api_key)
 
-    issue_id: str
-    repo_context: str
+TOOLS = []
+tool_filenames = ["get_issue", "get_issue_comments", "list_repository_issues", "search_issues"]
+for tool_filename in tool_filenames:
+    with open(f'github_tools/{tool_filename}.json') as f:
+        d = json.load(f)
+        TOOLS.append(d)
+
+client = GitHubAPI()
 
 
 def ask_model(messages):
-    model_response = openai.chat.completions.create(
-        model="gpt-4o",
+    model_response = mistral_ai.chat.complete(
+        model="mistral-large-latest",
         messages=messages,
         tools=TOOLS,
-        tool_choice="auto"
+        tool_choice="auto",
+        # max_tokens=150
     )
     response = model_response.choices[0].message
-    messages.append(response)
+    responses = [response]
 
     if response.tool_calls:
         for tool_call in response.tool_calls:
@@ -29,17 +38,26 @@ def ask_model(messages):
 
             function_result = execute_function(function_name, arguments, client)
 
-            messages.append({
+            responses.append({
                 "role": "tool",
                 "tool_call_id": tool_call.id,
                 "content": function_result
             })
 
-    final_response = openai.chat.completions.create(
-        model="gpt-4o",
-        messages=messages
-    )
-    return [final_response.choices[0].message]
+        final_response = mistral_ai.chat.complete(
+            model="mistral-large-latest",
+            messages=messages + responses,
+        )
+        return responses + [final_response]
+    else:
+        return responses
+
+
+class AgentState(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+
+    issue_id: str
+    repo_context: str
 
 
 async def init_with_context(state):
@@ -97,7 +115,7 @@ def compile_final_message(state):
                "content": """"Analyze the chat from start to finish.
                Produce a triage report on the GitHub issue based on the chat contents."""}]
     response = ask_model(state["messages"] + message)
-    return response[0]
+    return response[-1]
 
 
 def history_cond(state):
@@ -107,7 +125,7 @@ def history_cond(state):
     response1 = ask_model(state["messages"] + q1)
     response2 = ask_model(state["messages"] + q2)
 
-    if response1[0].content.lower() == "true" and response2[0].content.lower() == "true":
+    if response1[-1]["content"].lower() == "true" and response2[-1]["content"].lower() == "true":
         return "history"
     else:
         return "similar_issues"
@@ -118,7 +136,7 @@ def related_code_cond(state):
 
     response1 = ask_model(state["messages"] + q)
 
-    if response1[0].content.lower() == "true":
+    if response1[-1]["content"].lower() == "true":
         return "related_code"
     else:
         return "compile_final_message"
