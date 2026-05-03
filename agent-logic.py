@@ -1,16 +1,19 @@
 from typing import Annotated
 from typing_extensions import TypedDict
-from langgraph.graph.message import AnyMessage, add_messages
+from langgraph.graph.message import AnyMessage
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import interrupt, Command
+import mistralai
 from mistralai.client import Mistral
 import json
 from github_api import execute_function, GitHubAPI
+import operator
 
 
 api_key = "21Z5Tgmvrd69iu0yfU7ot1QRNOcT7Tcv"
 mistral_ai = Mistral(api_key=api_key)
+max_tokens = 50
 
 TOOLS = []
 tool_filenames = ["get_issue", "get_issue_comments", "list_repository_issues", "search_issues"]
@@ -23,48 +26,52 @@ client = GitHubAPI()
 
 
 def ask_model(messages):
-    model_response = mistral_ai.chat.complete(
-        model="mistral-large-latest",
-        messages=messages,
-        tools=TOOLS,
-        tool_choice="auto",
-        # max_tokens=150
-    )
-    response = model_response.choices[0].message
-    responses = [response]
-
-    if response.tool_calls:
-        for tool_call in response.tool_calls:
-            function_name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
-
-            decision = interrupt(f"""Do you approve calling the following function?:
-    function name: {function_name}
-    arguments: {arguments}
-Type "yes" for approval, otherwise stop agent.""")
-
-            if decision.lower() != "yes":
-                return Command(goto=END)
-
-            function_result = execute_function(function_name, arguments, client)
-
-            responses.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": function_result
-            })
-
-        final_response = mistral_ai.chat.complete(
+    try:
+        model_response = mistral_ai.chat.complete(
             model="mistral-large-latest",
-            messages=messages + responses,
+            messages=messages,
+            tools=TOOLS,
+            tool_choice="auto",
+            max_tokens=max_tokens
         )
-        return responses + [final_response]
-    else:
-        return responses
+        response = model_response.choices[0].message
+        responses = [response]
+
+        if response.tool_calls:
+            for tool_call in response.tool_calls:
+                function_name = tool_call.function.name
+                arguments = json.loads(tool_call.function.arguments)
+
+                decision = interrupt(f"""Do you approve calling the following function?:
+        function name: {function_name}
+        arguments: {arguments}
+    Type "yes" for approval, otherwise stop agent.""")
+
+                if decision.lower() != "yes":
+                    return Command(goto=END)
+
+                function_result = execute_function(function_name, arguments, client)
+
+                responses.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": function_result
+                })
+
+            final_response = mistral_ai.chat.complete(
+                model="mistral-large-latest",
+                messages=messages + responses,
+                max_tokens=max_tokens
+            )
+            return responses + [final_response]
+        else:
+            return responses
+    except mistralai.client.errors.SDKError:
+        return []
 
 
 class AgentState(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
+    messages: Annotated[list[AnyMessage], operator.add]
 
     issue_id: str
     repo_owner: str
@@ -85,11 +92,11 @@ def init(state):
 
 
 def context(state):
-    issue_context = GitHubAPI().get_issue(owner=state["repo_owner"],repo=state["repo_name"],
+    issue_context = GitHubAPI().get_issue(owner=state["repo_owner"], repo=state["repo_name"],
                                           issue_number=state["issue_id"])
-    return {"messages": [{"role": "tool",
-                          "content": issue_context}],
-            "issue_context": issue_context}
+    return {"messages": [{"role": "user",
+                          "content": issue_context["data"]["body"]}],
+            "issue_context": issue_context["data"]["body"]}
 
 
 def issue_type(state):
@@ -169,6 +176,7 @@ graph.add_node("compile_final_message", compile_final_message)
 graph.add_edge(START, "init")
 graph.add_edge("init", "context")
 graph.add_conditional_edges("context", history_cond)
+# graph.add_conditional_edges("init", history_cond)
 graph.add_edge("history", "similar_issues")
 graph.add_edge("similar_issues", "issue_type")
 graph.add_conditional_edges("issue_type", related_code_cond)
@@ -177,13 +185,15 @@ graph.add_edge("compile_final_message", END)
 
 repo_owner = "langchain-ai"
 repo_name = "langgraphjs"
-issue_id = "1112"
+issue_id = "2351"
 checkpointer = InMemorySaver()
 app = graph.compile(checkpointer=checkpointer)
 
 config = {"configurable": {"thread_id": "1"}}
 
-for result in app.stream({"issue_id": issue_id, "repo_owner": repo_owner, "repo_name": repo_name}, config=config):
+for result in app.stream({"issue_id": issue_id, "repo_owner": repo_owner,
+                          "repo_name": repo_name}, config=config):
+    print(result)
     if "__interrupt__" in result.keys():
         print(result["__interrupt__"][0].value)
         inp = input()
@@ -192,4 +202,4 @@ for result in app.stream({"issue_id": issue_id, "repo_owner": repo_owner, "repo_
 
 # initial_state: AgentState = {"issue_id": issue_id}
 # final_state = app.invoke(initial_state)
-print(f"Final Result: {final_result['final_message']}")
+print(f"Final Result: {final_result['messages'][-1]['content']}")
