@@ -1,14 +1,41 @@
+import json
 import requests
 from dotenv import load_dotenv
-import json
-
+import base64
+from urllib.parse import urlparse, unquote
 
 api_url = "https://api.github.com"
 load_dotenv()
 
 
+def github_file_url(url):
+    parsed = urlparse(url)
+    parts = parsed.path.strip("/").split("/")
+
+    # Expected example:
+    # owner      / repo            / blob / branch     / path to file
+    # HannaHalka / Agentic-Systems / blob / github-api / github_api.py
+    if len(parts) < 5:
+        raise ValueError("Invalid GitHub file URL")
+
+    owner = parts[0]
+    repo = parts[1]
+    ref = parts[3]
+
+    file_path = "/".join(parts[4:])
+    file_path = unquote(file_path)
+
+    m = {
+        "owner": owner,
+        "repo": repo,
+        "ref": ref,
+        "file_path": file_path,
+    }
+    return m
+
+
 class GitHubAPI:
-    def __init__(self, base_url=api_url, api_version="v0.0"):
+    def __init__(self, base_url=api_url, api_version="2026-03-10"):
         self.base_url = base_url.rstrip("/")
         self.api_version = api_version
 
@@ -83,6 +110,48 @@ class GitHubAPI:
             })
         return issue
 
+    def get_repository_file(self, owner, repo, file_path, ref):
+        params = {}
+
+        response = self._get(
+            path=f"/repos/{owner}/{repo}/contents/{file_path}",
+            params=params
+        )
+
+        if response.get("error"):
+            return response
+
+        data = response.get("data")
+
+        encoded_content = data.get("content", "")
+
+        clean_content = encoded_content.replace("\n", "")
+        decoded_bytes = base64.b64decode(clean_content)
+        decoded_text = decoded_bytes.decode("utf-8", errors="replace")
+
+        return {
+            "status": response.get("status"),
+            "url": response.get("url"),
+            "owner": owner,
+            "repo": repo,
+            "ref": ref,
+            "path": data.get("path"),
+            "name": data.get("name"),
+            "sha": data.get("sha"),
+            "size": data.get("size"),
+            "content": decoded_text,
+        }
+
+    def get_repository_file_by_url(self, url):
+        parsed = github_file_url(url)
+
+        return self.get_repository_file(
+            owner=parsed["owner"],
+            repo=parsed["repo"],
+            file_path=parsed["file_path"],
+            ref=parsed["ref"],
+        )
+
 
 def execute_function(function_name: str, arguments: dict[str, any], client: GitHubAPI) -> str:
     """Execute the function call and return result as string"""
@@ -98,3 +167,9 @@ def execute_function(function_name: str, arguments: dict[str, any], client: GitH
         return f"Unknown function: {function_name}"
 
     return json.dumps(result, indent=2)
+
+
+# client = GitHubAPI()
+# url = "https://github.com/HannaHalka/Agentic-Systems/blob/github-api/github_api.py"
+# result = client.get_repository_file_by_url(url)
+# print(json.dumps(result, indent=2, ensure_ascii=False))
