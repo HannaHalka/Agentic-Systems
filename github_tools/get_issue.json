@@ -1,0 +1,31 @@
+{
+  "type": "function",
+  "function":
+    {
+      "name": "get_issue",
+      "description": "Get a GitHub issue by repository owner, repository name, and issue number",
+      "parameters":
+        {
+          "type": "object",
+          "properties":
+            {
+              "owner":
+                {
+                  "type": "string",
+                  "description": "Repository owner"
+                },
+              "repo":
+                {
+                  "type": "string",
+                  "description": "Repository name"
+                },
+              "issue_number":
+                {
+                  "type": "integer",
+                  "description": "GitHub issue number"
+                }
+            },
+          "required": ["owner", "repo", "issue_number"]
+        }
+    }
+}
