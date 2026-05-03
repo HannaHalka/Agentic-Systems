@@ -2,6 +2,8 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import interrupt, Command
 from mistralai.client import Mistral
 import json
 from github_api import execute_function, GitHubAPI
@@ -35,6 +37,14 @@ def ask_model(messages):
         for tool_call in response.tool_calls:
             function_name = tool_call.function.name
             arguments = json.loads(tool_call.function.arguments)
+
+            decision = interrupt(f"""Do you approve calling the following function?:
+    function name: {function_name}
+    arguments: {arguments}
+Type "yes" for approval, otherwise stop agent.""")
+
+            if decision.lower() != "yes":
+                return Command(goto=END)
 
             function_result = execute_function(function_name, arguments, client)
 
@@ -161,8 +171,19 @@ graph.add_conditional_edges("issue_type", related_code_cond)
 graph.add_edge("related_code", "compile_final_message")
 graph.add_edge("compile_final_message", END)
 
-app = graph.compile()
 issue_id = "SOME_ID"
-initial_state: AgentState = {"issue_id": issue_id}
-final_state = app.invoke(initial_state)
-print(f"Final Result: {final_state['final_message']}")
+checkpointer = InMemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+
+config = {"configurable": {"thread_id": "1"}}
+
+for result in app.stream({"issue_id": issue_id}, config=config):
+    if "__interrupt__" in result.keys():
+        print(result["__interrupt__"][0].value)
+        inp = input()
+        final_result = app.invoke(Command(resume=inp), config=config)
+
+
+# initial_state: AgentState = {"issue_id": issue_id}
+# final_state = app.invoke(initial_state)
+print(f"Final Result: {final_result['final_message']}")
