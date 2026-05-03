@@ -67,7 +67,8 @@ def ask_model(messages):
         else:
             return responses
     except mistralai.client.errors.SDKError:
-        return []
+        return [{"role": "assistant",
+                 "content": "Sorry, cannot help. Ran out of tokens :("}]
 
 
 class AgentState(TypedDict):
@@ -176,7 +177,6 @@ graph.add_node("compile_final_message", compile_final_message)
 graph.add_edge(START, "init")
 graph.add_edge("init", "context")
 graph.add_conditional_edges("context", history_cond)
-# graph.add_conditional_edges("init", history_cond)
 graph.add_edge("history", "similar_issues")
 graph.add_edge("similar_issues", "issue_type")
 graph.add_conditional_edges("issue_type", related_code_cond)
