@@ -67,25 +67,29 @@ class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
 
     issue_id: str
-    repo_context: str
+    repo_owner: str
+    repo_name: str
+
+    issue_context: str
 
 
-def init_with_context(state):
-    context = get_context(state["issue_id"])
-    return {"repo_context": context,
-            "messages": [
-                {"role": "system", "content": """You are an AI assistant that can interact with issues raised in a public GitHub repository.
-                You can read issues and the repository code. When users give you an issue id and ask questions about the 
-                issue, use the available functions to interact with the GitHub repository and answer the questions."""},
-                {"role": "user", "content": state["issue_id"]},
-                {"role": "tool", "content": context}
+def init(state):
+    return {"messages": [
+                {"role": "system", "content": """You are an AI assistant that can interact with issues raised in a 
+                public GitHub repository. You can read issues and the repository code. When users give you an issue and 
+                a repository and ask questions about the issue, use the available functions to interact with the GitHub 
+                repository and answer the questions."""},
+                {"role": "user",
+                 "content": f'Issue {state["issue_id"]} in the {state["repo_owner"]}/{state["repo_name"]} repository'}
             ]}
 
 
-def basic_info(state):
-    info = get_basic_info(state["issue_id"])
-    info["messages"] = {"role": "tool", "content": f"{info}"}
-    return info
+def context(state):
+    issue_context = GitHubAPI().get_issue(owner=state["repo_owner"],repo=state["repo_name"],
+                                          issue_number=state["issue_id"])
+    return {"messages": [{"role": "tool",
+                          "content": issue_context}],
+            "issue_context": issue_context}
 
 
 def issue_type(state):
@@ -154,30 +158,32 @@ def related_code_cond(state):
 
 graph = StateGraph(AgentState)
 
-graph.add_node("init_with_context", init_with_context)
-graph.add_node("basic_info", basic_info)
+graph.add_node("init", init)
+graph.add_node("context", context)
 graph.add_node("issue_type", issue_type)
 graph.add_node("similar_issues", similar_issues)
 graph.add_node("related_code", related_code)
 graph.add_node("history", history)
 graph.add_node("compile_final_message", compile_final_message)
 
-graph.add_edge(START, "init_with_context")
-graph.add_edge("init_with_context", "basic_info")
-graph.add_conditional_edges("basic_info", history_cond)
+graph.add_edge(START, "init")
+graph.add_edge("init", "context")
+graph.add_conditional_edges("context", history_cond)
 graph.add_edge("history", "similar_issues")
 graph.add_edge("similar_issues", "issue_type")
 graph.add_conditional_edges("issue_type", related_code_cond)
 graph.add_edge("related_code", "compile_final_message")
 graph.add_edge("compile_final_message", END)
 
-issue_id = "SOME_ID"
+repo_owner = "langchain-ai"
+repo_name = "langgraphjs"
+issue_id = "1112"
 checkpointer = InMemorySaver()
 app = graph.compile(checkpointer=checkpointer)
 
 config = {"configurable": {"thread_id": "1"}}
 
-for result in app.stream({"issue_id": issue_id}, config=config):
+for result in app.stream({"issue_id": issue_id, "repo_owner": repo_owner, "repo_name": repo_name}, config=config):
     if "__interrupt__" in result.keys():
         print(result["__interrupt__"][0].value)
         inp = input()
