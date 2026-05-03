@@ -2,7 +2,7 @@ from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.graph import StateGraph, START, END
-from mistralai import Mistral
+from mistralai.client import Mistral
 import json
 from github_api import execute_function, GitHubAPI
 
@@ -60,7 +60,7 @@ class AgentState(TypedDict):
     repo_context: str
 
 
-async def init_with_context(state):
+def init_with_context(state):
     context = get_context(state["issue_id"])
     return {"repo_context": context,
             "messages": [
@@ -72,13 +72,13 @@ async def init_with_context(state):
             ]}
 
 
-async def basic_info(state):
+def basic_info(state):
     info = get_basic_info(state["issue_id"])
     info["messages"] = {"role": "tool", "content": f"{info}"}
     return info
 
 
-async def issue_type(state):
+def issue_type(state):
     message = [{"role": "user", "content": """"Classify the issue into one of the following 5 categories:
     1. bug
     2. feature request
@@ -90,21 +90,21 @@ async def issue_type(state):
     return {"messages": message + response}
 
 
-async def similar_issues(state):
+def similar_issues(state):
     message = [{"role": "user", "content": """"For the given issue, find up to 3 likely duplicate or closely related issues.
     Explain the relationship between the given issue and the selected issues."""}]
     response = ask_model(state["messages"] + message)
     return {"messages": message + response}
 
 
-async def related_code(state):
+def related_code(state):
     message = [{"role": "user", "content": """"For the given bug report, identify the most probable area of the codebase affected. 
     Use the issue text plus repository search."""}]
     response = ask_model(state["messages"] + message)
     return {"messages": message + response}
 
 
-async def history(state):
+def history(state):
     message = [{"role": "user", "content": """"For the given issue, summarize its current state, outstanding questions, and what decision is needed to move it forward"""}]
     response = ask_model(state["messages"] + message)
     return {"messages": message + response}
@@ -164,5 +164,5 @@ graph.add_edge("compile_final_message", END)
 app = graph.compile()
 issue_id = "SOME_ID"
 initial_state: AgentState = {"issue_id": issue_id}
-final_state = app.ainvoke(initial_state)
+final_state = app.invoke(initial_state)
 print(f"Final Result: {final_state['final_message']}")
