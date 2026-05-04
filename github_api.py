@@ -8,30 +8,72 @@ api_url = "https://api.github.com"
 load_dotenv()
 
 
+def github_find_files(url):
+    client = GitHubAPI()
+    files = []
+    results = client.get_list_of_url(url)
+    for result in results:
+        url = result['url']
+        name = url.rsplit("/", 1)[1]
+
+        if "." in name:
+            file_infp = client.get_repository_file_by_url(url)
+            files.append(file_infp)
+        else:
+            hiden_files = github_find_files(url)
+            files.extend(hiden_files)
+
+    return files
+
+
+
+
 def github_file_url(url):
     parsed = urlparse(url)
     parts = parsed.path.strip("/").split("/")
 
     # Expected example:
-    # owner      / repo            / blob / branch     / path to file
-    # HannaHalka / Agentic-Systems / blob / github-api / github_api.py
-    if len(parts) < 5:
+    # owner      / repo            / blob / branch / path to file
+    # HannaHalka / Agentic-Systems / blob / github-api / github-api.py
+    if len(parts) < 4:
         raise ValueError("Invalid GitHub file URL")
 
     owner = parts[0]
     repo = parts[1]
     ref = parts[3]
-
     file_path = "/".join(parts[4:])
-    file_path = unquote(file_path)
 
     m = {
         "owner": owner,
         "repo": repo,
         "ref": ref,
-        "file_path": file_path,
+        "file_path": file_path
     }
     return m
+
+
+def github_tree_url(url):
+    parsed = urlparse(url)
+    parts = parsed.path.strip("/").split("/")
+
+    # Expected:
+    # owner      / repo            / tree / branch
+    # HannaHalka / Agentic-Systems / tree / github-api
+    if len(parts) < 4:
+        raise ValueError("Invalid GitHub tree URL")
+
+    owner = parts[0]
+    repo = parts[1]
+    ref = parts[3]
+
+    directory_path = "/".join(parts[4:]) if len(parts) > 4 else ""
+
+    return {
+        "owner": owner,
+        "repo": repo,
+        "ref": ref,
+        "directory_path": unquote(directory_path),
+    }
 
 
 class GitHubAPI:
@@ -142,6 +184,31 @@ class GitHubAPI:
             "content": decoded_text,
         }
 
+    def get_list_of_url(self, url):
+        parsed = github_tree_url(url)
+
+        response = self._get(
+            path=f"/repos/{parsed['owner']}/{parsed['repo']}/contents/{parsed['directory_path']}",
+            params={ "ref": parsed["ref"] }
+        )
+
+        if response.get("error"):
+            return response
+
+        data = response.get("data")
+        if not isinstance(data, list):
+            return {
+                "status": response.get("status"),
+                "url": response.get("url"),
+            }
+
+        links = []
+
+        for item in data:
+            links.append({ "url": item.get("html_url") })
+
+        return links
+
     def get_repository_file_by_url(self, url):
         parsed = github_file_url(url)
 
@@ -169,7 +236,4 @@ def execute_function(function_name: str, arguments: dict[str, any], client: GitH
     return json.dumps(result, indent=2)
 
 
-# client = GitHubAPI()
-# url = "https://github.com/HannaHalka/Agentic-Systems/blob/github-api/github_api.py"
-# result = client.get_repository_file_by_url(url)
-# print(json.dumps(result, indent=2, ensure_ascii=False))
+# print(github_find_files("https://github.com/HannaHalka/Agentic-Systems/blob/github-api"))
