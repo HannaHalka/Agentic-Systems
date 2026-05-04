@@ -8,6 +8,26 @@ api_url = "https://api.github.com"
 load_dotenv()
 
 
+def github_find_files(url):
+    client = GitHubAPI()
+    files = []
+    results = client.get_list_of_url(url)
+    for result in results:
+        url = result['url']
+        name = url.rsplit("/", 1)[1]
+
+        if "." in name:
+            file_infp = client.get_repository_file_by_url(url)
+            files.append(file_infp)
+        else:
+            hiden_files = github_find_files(url)
+            files.extend(hiden_files)
+
+    return files
+
+
+
+
 def github_file_url(url):
     parsed = urlparse(url)
     parts = parsed.path.strip("/").split("/")
@@ -216,12 +236,4 @@ def execute_function(function_name: str, arguments: dict[str, any], client: GitH
     return json.dumps(result, indent=2)
 
 
-# client = GitHubAPI()
-# url = "https://github.com/HannaHalka/Agentic-Systems/blob/github-api"
-# results = client.get_list_of_url(url)
-# # print(results)
-# for result in results:
-#     url = result['url']
-#     # print(url) # падає на https://github.com/HannaHalka/Agentic-Systems/tree/github-api/github_tools
-#     r = client.get_repository_file_by_url(result['url'])
-#     print(json.dumps(r, indent=2, ensure_ascii=False))
+# print(github_find_files("https://github.com/HannaHalka/Agentic-Systems/blob/github-api"))
