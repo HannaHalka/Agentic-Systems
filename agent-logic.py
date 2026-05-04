@@ -26,6 +26,7 @@ client = GitHubAPI()
 
 
 def ask_model(messages):
+    print("asking")
     try:
         model_response = mistral_ai.chat.complete(
             model="mistral-large-latest",
@@ -43,9 +44,9 @@ def ask_model(messages):
                 arguments = json.loads(tool_call.function.arguments)
 
                 decision = interrupt(f"""Do you approve calling the following function?:
-        function name: {function_name}
-        arguments: {arguments}
-    Type "yes" for approval, otherwise stop agent.""")
+    function name: {function_name}
+    arguments: {arguments}
+Type "yes" for approval, otherwise stop agent.""")
 
                 if decision.lower() != "yes":
                     return Command(goto=END)
@@ -56,6 +57,7 @@ def ask_model(messages):
                     "role": "tool",
                     "tool_call_id": tool_call.id,
                     "content": function_result
+                    # "content": f"Yay {function_name}"
                 })
 
             final_response = mistral_ai.chat.complete(
@@ -63,6 +65,9 @@ def ask_model(messages):
                 messages=messages + responses,
                 max_tokens=max_tokens
             )
+            response_dict = final_response.model_dump()
+            final_response = response_dict["choices"][0]["message"]
+
             return responses + [final_response]
         else:
             return responses
@@ -73,6 +78,7 @@ def ask_model(messages):
 
 class AgentState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
+    final_response: str
 
     issue_id: str
     repo_owner: str
@@ -82,6 +88,7 @@ class AgentState(TypedDict):
 
 
 def init(state):
+    print("Init node")
     return {"messages": [
                 {"role": "system", "content": """You are an AI assistant that can interact with issues raised in a 
                 public GitHub repository. You can read issues and the repository code. When users give you an issue and 
@@ -89,10 +96,12 @@ def init(state):
                 repository and answer the questions."""},
                 {"role": "user",
                  "content": f'Issue {state["issue_id"]} in the {state["repo_owner"]}/{state["repo_name"]} repository'}
-            ]}
+            ],
+            "final_response": ""}
 
 
 def context(state):
+    print("Context node")
     issue_context = GitHubAPI().get_issue(owner=state["repo_owner"], repo=state["repo_name"],
                                           issue_number=state["issue_id"])
     return {"messages": [{"role": "user",
@@ -101,6 +110,7 @@ def context(state):
 
 
 def issue_type(state):
+    print("Issue_type node")
     message = [{"role": "user", "content": """"Classify the issue into one of the following 5 categories:
     1. bug
     2. feature request
@@ -113,6 +123,7 @@ def issue_type(state):
 
 
 def similar_issues(state):
+    print("Similar_issues node")
     message = [{"role": "user", "content": """"For the given issue, find up to 3 likely duplicate or closely related issues.
     Explain the relationship between the given issue and the selected issues."""}]
     response = ask_model(state["messages"] + message)
@@ -120,6 +131,7 @@ def similar_issues(state):
 
 
 def related_code(state):
+    print("Related_code node")
     message = [{"role": "user", "content": """"For the given bug report, identify the most probable area of the codebase affected. 
     Use the issue text plus repository search."""}]
     response = ask_model(state["messages"] + message)
@@ -127,26 +139,33 @@ def related_code(state):
 
 
 def history(state):
+    print("History node")
     message = [{"role": "user", "content": """"For the given issue, summarize its current state, outstanding questions, and what decision is needed to move it forward"""}]
     response = ask_model(state["messages"] + message)
     return {"messages": message + response}
 
 
 def compile_final_message(state):
+    print("Compile_final_message node")
     message = [{"role": "user",
                "content": """"Analyze the chat from start to finish.
                Produce a triage report on the GitHub issue based on the chat contents."""}]
     response = ask_model(state["messages"] + message)
-    return response[-1]
+    return {"final_response": response[-1]["content"]}
 
 
 def history_cond(state):
+    print("History_cond node start")
     q1 = [{"role": "user", "content": """"Is the given issue currently open? Return only the bool output."""}]
     q2 = [{"role": "user", "content": """"Was the given issue opened over 6 months ago? Return only the bool output."""}]
 
     response1 = ask_model(state["messages"] + q1)
     response2 = ask_model(state["messages"] + q2)
+    # print(response1[-1]["content"].lower(), response2[-1]["content"].lower())
+    print("History_cond node fin")
 
+    if type(response1) is Command or type(response2) is Command:
+        return "End"
     if response1[-1]["content"].lower() == "true" and response2[-1]["content"].lower() == "true":
         return "history"
     else:
@@ -154,10 +173,14 @@ def history_cond(state):
 
 
 def related_code_cond(state):
+    print("Related_code_cond node start")
     q = [{"role": "user", "content": """"Is the given issue a bug report? Return only the bool output."""}]
 
     response1 = ask_model(state["messages"] + q)
+    print("Related_code_cond node fin")
 
+    if type(response1) is Command:
+        return "End"
     if response1[-1]["content"].lower() == "true":
         return "related_code"
     else:
@@ -176,10 +199,18 @@ graph.add_node("compile_final_message", compile_final_message)
 
 graph.add_edge(START, "init")
 graph.add_edge("init", "context")
-graph.add_conditional_edges("context", history_cond)
+graph.add_conditional_edges("context", history_cond, {
+        "history": "history",
+        "similar_issues": "similar_issues",
+        "End": END
+    })
 graph.add_edge("history", "similar_issues")
 graph.add_edge("similar_issues", "issue_type")
-graph.add_conditional_edges("issue_type", related_code_cond)
+graph.add_conditional_edges("issue_type", related_code_cond, {
+        "related_code": "related_code",
+        "compile_final_message": "compile_final_message",
+        "End": END
+    })
 graph.add_edge("related_code", "compile_final_message")
 graph.add_edge("compile_final_message", END)
 
@@ -190,6 +221,7 @@ checkpointer = InMemorySaver()
 app = graph.compile(checkpointer=checkpointer)
 
 config = {"configurable": {"thread_id": "1"}}
+# print(app.get_graph().draw_ascii())
 
 for result in app.stream({"issue_id": issue_id, "repo_owner": repo_owner,
                           "repo_name": repo_name}, config=config):
@@ -197,9 +229,10 @@ for result in app.stream({"issue_id": issue_id, "repo_owner": repo_owner,
     if "__interrupt__" in result.keys():
         print(result["__interrupt__"][0].value)
         inp = input()
-        final_result = app.invoke(Command(resume=inp), config=config)
+        result = app.invoke(Command(resume=inp), config=config)
 
-
-# initial_state: AgentState = {"issue_id": issue_id}
-# final_state = app.invoke(initial_state)
-print(f"Final Result: {final_result['messages'][-1]['content']}")
+print()
+print(f"Final Result: {result['final_response']}")
+print()
+for a in result['messages']:
+    print(a)
